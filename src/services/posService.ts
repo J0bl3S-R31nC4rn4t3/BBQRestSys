@@ -118,4 +118,13 @@ export const posService = {
     if (!res.ok) throw new Error('Failed to get next table number');
     return await res.json();
   },
+
+  async reprintReceipt(orderId: number): Promise<void> {
+    const res = await fetch(`${API_BASE}/pos/reprint`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order_id: orderId })
+    });
+    if (!res.ok) throw new Error('Failed to send reprint command');
+  },
 };

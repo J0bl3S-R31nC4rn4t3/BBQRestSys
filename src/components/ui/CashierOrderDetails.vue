@@ -22,6 +22,7 @@ const emit = defineEmits<{
   (e: 'update-status', status: string): void;
   (e: 'settle-payment'): void;
   (e: 'save-pending-edit', updatedData: PendingOrder): void;
+  (e: 'preview-receipt'): void; // NEW: Added preview event
 }>();
 
 const isEditing = ref(false);
@@ -200,9 +201,16 @@ function saveEdit() {
               <h3 :class="['font-black text-on-surface mt-1 truncate', fontLg]">{{ selectedOrder.customer_identifier }}</h3>
               <p :class="['font-medium text-on-surface-variant truncate', fontSm]">{{ selectedOrder.order_type }}</p>
             </div>
-            <span :class="[selectedOrder.status === 'Cooking' ? 'bg-tertiary-container/10 text-tertiary-container border border-tertiary-container/20 animate-pulse' : 'bg-tertiary/10 text-tertiary border border-tertiary/20', 'px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0']">
-              {{ selectedOrder.status }}
-            </span>
+            
+            <div class="flex items-center gap-2 shrink-0">
+              <button @click="emit('preview-receipt')" class="text-on-surface-variant hover:text-primary bg-surface-container hover:bg-surface-container-high p-1.5 rounded-full transition-colors active:scale-90" title="Preview Receipt">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+              </button>
+              
+              <span :class="[selectedOrder.status === 'Cooking' ? 'bg-tertiary-container/10 text-tertiary-container border border-tertiary-container/20 animate-pulse' : 'bg-tertiary/10 text-tertiary border border-tertiary/20', 'px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0']">
+                {{ selectedOrder.status }}
+              </span>
+            </div>
           </div>
 
           <div class="flex-1 overflow-y-auto border-t border-b border-outline-variant/10 py-3 my-2 pr-1 sm:pr-2">

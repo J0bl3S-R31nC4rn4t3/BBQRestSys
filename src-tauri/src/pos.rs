@@ -56,6 +56,11 @@ pub struct ActiveOrderItemResponse {
     pub unit_price: f64,
 }
 
+#[derive(Deserialize)]
+pub struct ReprintReq {
+    pub order_id: i32,
+}
+
 pub async fn get_active_orders(State(pool): State<PgPool>) -> AppResult<Vec<ActiveOrderResponse>> {
     let orders = sqlx::query_as::<_, ActiveOrder>(
         "SELECT order_id, customer_identifier, order_type, total_amount::float8, status, timestamp
@@ -294,4 +299,89 @@ pub async fn get_next_table_number(State(pool): State<PgPool>) -> Result<Json<i3
     }
 
     Ok(Json(next_table))
+}
+
+pub async fn reprint_receipt(State(pool): State<PgPool>, Json(payload): Json<ReprintReq>) -> AppResult<()> {
+    let mut tx = pool.begin().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // 1. Fetch items just like we do in settle_payment
+    let items = sqlx::query_as::<_, OrderReceiptItem>(
+        "SELECT pi.pos_display_name, oi.quantity, oi.price_at_time_of_sale::float8 
+         FROM order_item oi 
+         JOIN prepared_inventory pi ON oi.prep_item_id = pi.prep_item_id 
+         WHERE oi.order_id = $1"
+    ).bind(payload.order_id).fetch_all(&mut *tx).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // 2. Fetch totals just like we do in settle_payment
+    let order_info: (f64, String) = sqlx::query_as(
+        "SELECT total_amount::float8, customer_identifier 
+         FROM orders WHERE order_id = $1"
+    )
+    .bind(payload.order_id).fetch_one(&mut *tx).await.unwrap_or((0.0, "Unknown".to_string()));
+
+    let total = order_info.0;
+    let customer = order_info.1;
+
+    tx.commit().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // 3. Fire the print command in the background
+    tokio::spawn(async move {
+        let mut printer_data: Vec<u8> = Vec::new();
+        
+        // ESC @ (Initialize printer)
+        printer_data.extend_from_slice(&[0x1B, 0x40]);
+        // ESC a 1 (Center align)
+        printer_data.extend_from_slice(&[0x1B, 0x61, 0x01]);
+        
+        printer_data.extend_from_slice(b"BBQ NA MURAG LAMI\n");
+        printer_data.extend_from_slice(b"Cagayan De Oro City\n");
+        // NOTE: Added "REPRINT" header to distinguish from the original
+        printer_data.extend_from_slice(b"*** REPRINT ***\n"); 
+        printer_data.extend_from_slice(b"--------------------------------\n");
+        
+        // ESC a 0 (Left align)
+        printer_data.extend_from_slice(&[0x1B, 0x61, 0x00]);
+        
+        let order_hdr = format!("Identifier: {}\n\n", customer);
+        printer_data.extend_from_slice(order_hdr.as_bytes());
+
+        for item in &items {
+            let line_total = item.price_at_time_of_sale * item.quantity as f64;
+            let name_qty = format!("{}x {}", item.quantity, item.pos_display_name);
+            let price_str = format!("{:.2}", line_total);
+            
+            let mut safe_name = name_qty.clone();
+            if safe_name.len() > 22 { safe_name.truncate(22); }
+            
+            let padding = 32_usize.saturating_sub(safe_name.len() + price_str.len());
+            let spaces = " ".repeat(padding);
+            
+            let print_line = format!("{}{}{}\n", safe_name, spaces, price_str);
+            printer_data.extend_from_slice(print_line.as_bytes());
+        }
+
+        printer_data.extend_from_slice(b"--------------------------------\n");
+        
+        // ESC a 2 (Right align)
+        printer_data.extend_from_slice(&[0x1B, 0x61, 0x02]);
+        let total_line = format!("TOTAL: PHP {:.2}\n", total);
+        
+        // ESC ! 0x11 (Double height & width text for the total)
+        printer_data.extend_from_slice(&[0x1B, 0x21, 0x11]);
+        printer_data.extend_from_slice(total_line.as_bytes());
+        // ESC ! 0x00 (Reset to normal text)
+        printer_data.extend_from_slice(&[0x1B, 0x21, 0x00]);
+
+        // ESC a 1 (Center align)
+        printer_data.extend_from_slice(&[0x1B, 0x61, 0x01]);
+        printer_data.extend_from_slice(b"\nThank you for dining with us!\n\n\n\n\n");
+        
+        // GS V 0 (Cut paper command)
+        printer_data.extend_from_slice(&[0x1D, 0x56, 0x00]);
+        
+        // Connect to the Windows Printer Share and send the raw byte array
+        let _ = std::fs::write(r"\\localhost\Xprinter", printer_data);
+    });
+
+    Ok(Json(()))
 }

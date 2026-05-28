@@ -5,6 +5,7 @@ import { queueService, type PendingOrder } from '../services/queueService';
 import Header from '../components/layout/Header.vue';
 import CashierOrderDetails from '../components/ui/CashierOrderDetails.vue';
 import ActiveTabsModal from '../components/modal/ActiveTabsModal.vue';
+import ReceiptModal from '../components/modal/ReceiptModal.vue';
 import BaseButton from '../components/ui/BaseButton.vue';
 import { useResponsive } from '../composables/useResponsive';
 import { useAuth } from '../stores/authStore';
@@ -23,6 +24,7 @@ const isSearching = ref(false);
 const tableNumberInput = ref('');
 const isLoadingData = ref(true);
 const showTabsModal = ref(false);
+const isReceiptModalOpen = ref(false);
 
 const staffId = currentUser.value?.id || 1;
 
@@ -188,6 +190,17 @@ function handleSavePendingEdit(updatedPending: PendingOrder) {
   selectedPending.value = updatedPending;
 }
 
+// NEW: Added handler for manual printing
+async function handleManualPrint(orderId: number) {
+  try {
+    await posService.reprintReceipt(orderId);
+    alert("Receipt sent to printer!");
+  } catch (error) {
+    console.error("Failed to print receipt:", error);
+    alert("Failed to communicate with the printer.");
+  }
+}
+
 onMounted(() => {
   loadData();
 });
@@ -243,6 +256,7 @@ onMounted(() => {
         @settle-payment="handleSettlePayment"
         @save-active-edit="handleSaveActiveEdit"
         @save-pending-edit="handleSavePendingEdit"
+        @preview-receipt="isReceiptModalOpen = true" 
       />
     </div>
 
@@ -253,6 +267,13 @@ onMounted(() => {
       :selected-order-id="selectedOrder?.order_id"
       @close="showTabsModal = false"
       @select-order="selectOrder"
+    />
+
+    <ReceiptModal 
+      :is-open="isReceiptModalOpen" 
+      :order="selectedOrder" 
+      @close="isReceiptModalOpen = false"
+      @print="handleManualPrint"
     />
 
   </div>
