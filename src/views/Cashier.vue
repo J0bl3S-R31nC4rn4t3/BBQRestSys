@@ -6,6 +6,7 @@ import Header from '../components/layout/Header.vue';
 import CashierOrderDetails from '../components/ui/CashierOrderDetails.vue';
 import ActiveTabsModal from '../components/modal/ActiveTabsModal.vue';
 import ReceiptModal from '../components/modal/ReceiptModal.vue';
+import PrintConfirmationModal from '../components/modal/PrintConfirmationModal.vue';
 import BaseButton from '../components/ui/BaseButton.vue';
 import { useResponsive } from '../composables/useResponsive';
 import { useAuth } from '../stores/authStore';
@@ -25,6 +26,10 @@ const tableNumberInput = ref('');
 const isLoadingData = ref(true);
 const showTabsModal = ref(false);
 const isReceiptModalOpen = ref(false);
+
+// Post-payment state
+const isPrintConfirmOpen = ref(false);
+const justSettledOrder = ref<ActiveOrder | null>(null);
 
 const staffId = currentUser.value?.id || 1;
 
@@ -112,7 +117,11 @@ async function handleSettlePayment() {
 
   try {
     await posService.settlePayment(selectedOrder.value.order_id, staffId);
-    alert(`Payment settled for ${selectedOrder.value.customer_identifier}!`);
+    
+    // Save order data for the confirmation dialog before clearing the active selection
+    justSettledOrder.value = selectedOrder.value;
+    isPrintConfirmOpen.value = true;
+    
     selectedOrder.value = null;
     await loadData();
   } catch (error) {
@@ -190,14 +199,34 @@ function handleSavePendingEdit(updatedPending: PendingOrder) {
   selectedPending.value = updatedPending;
 }
 
-// NEW: Added handler for manual printing
-async function handleManualPrint(orderId: number) {
+// Handlers for post-payment print confirmation
+async function handlePostPaymentPrint() {
+  if (!justSettledOrder.value) return;
+  
+  isPrintConfirmOpen.value = false;
   try {
-    await posService.reprintReceipt(orderId);
-    alert("Receipt sent to printer!");
+    await posService.reprintReceipt(justSettledOrder.value.order_id);
   } catch (error) {
     console.error("Failed to print receipt:", error);
     alert("Failed to communicate with the printer.");
+  }
+}
+
+function handlePostPaymentView() {
+  isPrintConfirmOpen.value = false;
+  isReceiptModalOpen.value = true;
+}
+
+// Handler for manual printing from the preview modal
+// Inside Cashier.vue
+async function handleManualPrint(orderId: number) {
+  try {
+    await posService.reprintReceipt(orderId);
+    alert("Receipt successfully printed!");
+  } catch (error) {
+    console.error("Print job failed:", error);
+    // This will now trigger if the printer is off, out of paper, or disconnected
+    alert("PRINTER ERROR: Please check if the Xprinter is turned on and connected to the PC.");
   }
 }
 
@@ -271,9 +300,17 @@ onMounted(() => {
 
     <ReceiptModal 
       :is-open="isReceiptModalOpen" 
-      :order="selectedOrder" 
+      :order="selectedOrder || justSettledOrder" 
       @close="isReceiptModalOpen = false"
       @print="handleManualPrint"
+    />
+
+    <PrintConfirmationModal
+      :is-open="isPrintConfirmOpen"
+      :customer-identifier="justSettledOrder?.customer_identifier || ''"
+      @print="handlePostPaymentPrint"
+      @view="handlePostPaymentView"
+      @close="isPrintConfirmOpen = false"
     />
 
   </div>

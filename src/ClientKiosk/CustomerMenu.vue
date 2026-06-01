@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
+import { getImageUrl } from '../utils/imageUtils';
 import { posService, type PosItem, type CartItem } from '../services/posService';
 import { queueService } from '../services/queueService';
 import DataLoader from '../components/ui/DataLoader.vue';
@@ -271,7 +272,7 @@ function handleImageError(event: Event) {
                 <div class="h-32 md:h-40 bg-surface-container-high rounded-2xl mb-4 flex items-center justify-center text-on-surface-variant overflow-hidden border border-outline-variant/5 relative transition-opacity">
                   <img 
                     v-if="group.photo_url" 
-                    :src="`http://localhost:3000${group.photo_url}`" 
+                    :src="getImageUrl(group.photo_url)" 
                     class="w-full h-full object-cover transition-transform duration-500 ease-out group-hover:scale-110" 
                     @error="handleImageError" 
                   />

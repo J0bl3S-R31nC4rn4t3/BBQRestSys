@@ -1,3 +1,5 @@
+import { getApiBaseUrl } from '../utils/imageUtils'; // NEW: Import the centralized base URL
+
 export interface RawInventoryItem {
   raw_item_id: number;
   category: string;
@@ -32,9 +34,8 @@ export interface PrepLog {
   skewers_added: number;
 }
 
-const API_BASE = window.location.hostname === 'localhost' 
-  ? 'http://localhost:3000/api' 
-  : `http://${window.location.hostname}:3000/api`;
+// NEW: Use the utility function instead of hardcoding the localhost logic here
+const API_BASE = `${getApiBaseUrl()}/api`;
 const CURRENT_ADMIN_ID = 1;
 
 export const inventoryService = {
@@ -137,7 +138,6 @@ export const inventoryService = {
     return await res.json();
   },
   
-  // NEW: Accepts prepItemId to target specific variants
   async logPrepTransaction(category: string, part: string, kilos: number, sticks: number, prepItemId: number, staffName?: string): Promise<void> {
     const res = await fetch(`${API_BASE}/inventory/log-prep`, {
       method: 'POST',
@@ -158,23 +158,7 @@ export const inventoryService = {
     if (!res.ok) throw new Error('Failed to fetch recent prep logs');
     return await res.json();
   },
-  
-  async uploadPhoto(file: File): Promise<string> {
-    const ext = file.name.split('.').pop() || 'png';
-    const res = await fetch(`${API_BASE}/inventory/upload-photo`, {
-      method: 'POST',
-      headers: {
-        'x-file-ext': ext,
-        'Content-Type': 'application/octet-stream'
-      },
-      body: file
-    });
-    
-    if (!res.ok) throw new Error('Failed to upload photo');
-    return await res.json();
-  },
 
-  // Add this inside export const inventoryService = { ... }
   async deletePreparedItem(prepItemId: number): Promise<void> {
     const res = await fetch(`${API_BASE}/inventory/delete-prepared`, {
       method: 'POST',

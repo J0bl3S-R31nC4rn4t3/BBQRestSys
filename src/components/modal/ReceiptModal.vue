@@ -53,7 +53,7 @@ const formattedDate = computed(() => {
           
           <div class="text-center mb-4">
             <h2 class="font-bold text-lg mb-1">BBQ NA MURAG LAMI</h2>
-            <p class="text-xs text-gray-700">Cagayan De Oro City</p>
+            <p class="text-xs text-gray-700">Ampayon, Butuan City</p>
           </div>
 
           <div class="border-b-2 border-dashed border-gray-400 mb-3 pb-3 text-xs text-gray-700 space-y-1">

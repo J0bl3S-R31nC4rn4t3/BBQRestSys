@@ -304,7 +304,7 @@ pub async fn get_next_table_number(State(pool): State<PgPool>) -> Result<Json<i3
 pub async fn reprint_receipt(State(pool): State<PgPool>, Json(payload): Json<ReprintReq>) -> AppResult<()> {
     let mut tx = pool.begin().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // 1. Fetch items just like we do in settle_payment
+    // 1. Fetch items
     let items = sqlx::query_as::<_, OrderReceiptItem>(
         "SELECT pi.pos_display_name, oi.quantity, oi.price_at_time_of_sale::float8 
          FROM order_item oi 
@@ -312,7 +312,7 @@ pub async fn reprint_receipt(State(pool): State<PgPool>, Json(payload): Json<Rep
          WHERE oi.order_id = $1"
     ).bind(payload.order_id).fetch_all(&mut *tx).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // 2. Fetch totals just like we do in settle_payment
+    // 2. Fetch totals
     let order_info: (f64, String) = sqlx::query_as(
         "SELECT total_amount::float8, customer_identifier 
          FROM orders WHERE order_id = $1"
@@ -324,64 +324,58 @@ pub async fn reprint_receipt(State(pool): State<PgPool>, Json(payload): Json<Rep
 
     tx.commit().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // 3. Fire the print command in the background
-    tokio::spawn(async move {
-        let mut printer_data: Vec<u8> = Vec::new();
+    // 3. Build Printer Data (Notice: No more tokio::spawn)
+    let mut printer_data: Vec<u8> = Vec::new();
         
-        // ESC @ (Initialize printer)
-        printer_data.extend_from_slice(&[0x1B, 0x40]);
-        // ESC a 1 (Center align)
-        printer_data.extend_from_slice(&[0x1B, 0x61, 0x01]);
-        
-        printer_data.extend_from_slice(b"BBQ NA MURAG LAMI\n");
-        printer_data.extend_from_slice(b"Cagayan De Oro City\n");
-        // NOTE: Added "REPRINT" header to distinguish from the original
-        printer_data.extend_from_slice(b"*** REPRINT ***\n"); 
-        printer_data.extend_from_slice(b"--------------------------------\n");
-        
-        // ESC a 0 (Left align)
-        printer_data.extend_from_slice(&[0x1B, 0x61, 0x00]);
-        
-        let order_hdr = format!("Identifier: {}\n\n", customer);
-        printer_data.extend_from_slice(order_hdr.as_bytes());
+    printer_data.extend_from_slice(&[0x1B, 0x40]); // Init
+    printer_data.extend_from_slice(&[0x1B, 0x61, 0x01]); // Center
+    
+    printer_data.extend_from_slice(b"BBQ NA MURAG LAMI\n");
+    printer_data.extend_from_slice(b"Cagayan De Oro City\n");
+    printer_data.extend_from_slice(b"*** REPRINT ***\n"); 
+    printer_data.extend_from_slice(b"--------------------------------\n");
+    
+    printer_data.extend_from_slice(&[0x1B, 0x61, 0x00]); // Left
+    
+    let order_hdr = format!("Identifier: {}\n\n", customer);
+    printer_data.extend_from_slice(order_hdr.as_bytes());
 
-        for item in &items {
-            let line_total = item.price_at_time_of_sale * item.quantity as f64;
-            let name_qty = format!("{}x {}", item.quantity, item.pos_display_name);
-            let price_str = format!("{:.2}", line_total);
-            
-            let mut safe_name = name_qty.clone();
-            if safe_name.len() > 22 { safe_name.truncate(22); }
-            
-            let padding = 32_usize.saturating_sub(safe_name.len() + price_str.len());
-            let spaces = " ".repeat(padding);
-            
-            let print_line = format!("{}{}{}\n", safe_name, spaces, price_str);
-            printer_data.extend_from_slice(print_line.as_bytes());
-        }
+    for item in &items {
+        let line_total = item.price_at_time_of_sale * item.quantity as f64;
+        let name_qty = format!("{}x {}", item.quantity, item.pos_display_name);
+        let price_str = format!("{:.2}", line_total);
+        
+        let mut safe_name = name_qty.clone();
+        if safe_name.len() > 22 { safe_name.truncate(22); }
+        
+        let padding = 32_usize.saturating_sub(safe_name.len() + price_str.len());
+        let spaces = " ".repeat(padding);
+        
+        let print_line = format!("{}{}{}\n", safe_name, spaces, price_str);
+        printer_data.extend_from_slice(print_line.as_bytes());
+    }
 
-        printer_data.extend_from_slice(b"--------------------------------\n");
-        
-        // ESC a 2 (Right align)
-        printer_data.extend_from_slice(&[0x1B, 0x61, 0x02]);
-        let total_line = format!("TOTAL: PHP {:.2}\n", total);
-        
-        // ESC ! 0x11 (Double height & width text for the total)
-        printer_data.extend_from_slice(&[0x1B, 0x21, 0x11]);
-        printer_data.extend_from_slice(total_line.as_bytes());
-        // ESC ! 0x00 (Reset to normal text)
-        printer_data.extend_from_slice(&[0x1B, 0x21, 0x00]);
+    printer_data.extend_from_slice(b"--------------------------------\n");
+    
+    printer_data.extend_from_slice(&[0x1B, 0x61, 0x02]); // Right
+    let total_line = format!("TOTAL: PHP {:.2}\n", total);
+    
+    printer_data.extend_from_slice(&[0x1B, 0x21, 0x11]); // Double height/width
+    printer_data.extend_from_slice(total_line.as_bytes());
+    printer_data.extend_from_slice(&[0x1B, 0x21, 0x00]); // Reset
 
-        // ESC a 1 (Center align)
-        printer_data.extend_from_slice(&[0x1B, 0x61, 0x01]);
-        printer_data.extend_from_slice(b"\nThank you for dining with us!\n\n\n\n\n");
-        
-        // GS V 0 (Cut paper command)
-        printer_data.extend_from_slice(&[0x1D, 0x56, 0x00]);
-        
-        // Connect to the Windows Printer Share and send the raw byte array
-        let _ = std::fs::write(r"\\localhost\Xprinter", printer_data);
-    });
+    printer_data.extend_from_slice(&[0x1B, 0x61, 0x01]); // Center
+    printer_data.extend_from_slice(b"\nThank you for dining with us!\n\n\n\n\n");
+    
+    printer_data.extend_from_slice(&[0x1D, 0x56, 0x00]); // Cut
+    printer_data.extend_from_slice(&[0x1B, 0x70, 0x00, 0x19, 0xFA]); // Drawer
+
+    // 4. Send to printer using async I/O and catch the error
+    if let Err(e) = tokio::fs::write(r"\\localhost\Xprinter", printer_data).await {
+        eprintln!("Printer hardware error: {}", e);
+        // Return a 500 error so the frontend knows the printer failed
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, "Printer is offline or disconnected".to_string()));
+    }
 
     Ok(Json(()))
 }
