@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch, onBeforeUnmount } from 'vue';
 import BaseButton from '../ui/BaseButton.vue';
 import { useResponsive } from '../../composables/useResponsive';
 import type { ActiveOrder } from '../../services/posService';
@@ -15,6 +15,51 @@ const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'print', orderId: number): void;
 }>();
+
+// --- Dragging Logic ---
+const position = ref({ x: 0, y: 0 });
+const isDragging = ref(false);
+let startMouse = { x: 0, y: 0 };
+let startPosition = { x: 0, y: 0 };
+
+function startDrag(event: MouseEvent) {
+  // Prevent dragging if the user clicks the close button specifically
+  if ((event.target as HTMLElement).closest('button')) return;
+
+  isDragging.value = true;
+  startMouse = { x: event.clientX, y: event.clientY };
+  startPosition = { x: position.value.x, y: position.value.y };
+  
+  document.addEventListener('mousemove', onDrag);
+  document.addEventListener('mouseup', stopDrag);
+}
+
+function onDrag(event: MouseEvent) {
+  if (!isDragging.value) return;
+  const dx = event.clientX - startMouse.x;
+  const dy = event.clientY - startMouse.y;
+  position.value = { x: startPosition.x + dx, y: startPosition.y + dy };
+}
+
+function stopDrag() {
+  isDragging.value = false;
+  document.removeEventListener('mousemove', onDrag);
+  document.removeEventListener('mouseup', stopDrag);
+}
+
+// Reset modal position when it closes
+watch(() => props.isOpen, (newVal) => {
+  if (!newVal) {
+    position.value = { x: 0, y: 0 };
+  }
+});
+
+// Clean up event listeners if component is destroyed while dragging
+onBeforeUnmount(() => {
+  document.removeEventListener('mousemove', onDrag);
+  document.removeEventListener('mouseup', stopDrag);
+});
+// ----------------------
 
 // Calculate the total number of items
 const totalItems = computed(() => {
@@ -38,11 +83,23 @@ const formattedDate = computed(() => {
 
 <template>
   <div v-if="isOpen && order" class="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm transition-opacity" @click.self="$emit('close')">
-    <div class="bg-surface rounded-2xl w-full max-w-sm shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 border border-outline-variant/20">
+    
+    <!-- Added inline style for transform translation -->
+    <div 
+      :style="{ transform: `translate(${position.x}px, ${position.y}px)` }"
+      class="bg-surface rounded-2xl w-full max-w-sm shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 border border-outline-variant/20 will-change-transform"
+    >
       
-      <div class="px-5 py-4 border-b border-outline-variant/20 flex justify-between items-center bg-surface-container-low shrink-0">
+      <!-- Modal Header (Now acts as the drag handle) -->
+      <div 
+        @mousedown.prevent="startDrag"
+        :class="[
+          'px-5 py-4 border-b border-outline-variant/20 flex justify-between items-center bg-surface-container-low shrink-0 select-none',
+          isDragging ? 'cursor-grabbing' : 'cursor-grab'
+        ]"
+      >
         <h3 :class="['font-black text-on-surface tracking-tight', fontLg]">Receipt Preview</h3>
-        <button @click="$emit('close')" class="text-on-surface-variant hover:text-error transition-colors active:scale-90">
+        <button @click="$emit('close')" class="text-on-surface-variant hover:text-error transition-colors active:scale-90 z-10 cursor-pointer">
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
         </button>
       </div>

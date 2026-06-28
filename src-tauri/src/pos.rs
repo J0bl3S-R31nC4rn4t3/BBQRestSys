@@ -48,7 +48,7 @@ pub struct ActiveOrderResponse {
     pub cart_items: Vec<ActiveOrderItemResponse>, 
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, Deserialize, sqlx::FromRow)]
 pub struct ActiveOrderItemResponse {
     pub prep_item_id: i32,
     pub pos_display_name: String,
@@ -59,6 +59,12 @@ pub struct ActiveOrderItemResponse {
 #[derive(Deserialize)]
 pub struct ReprintReq {
     pub order_id: i32,
+    pub customer_identifier: String,
+    pub order_type: String,
+    pub total_amount: f64,
+    pub status: String,
+    pub timestamp: String,
+    pub cart_items: Vec<ActiveOrderItemResponse>,
 }
 
 pub async fn get_active_orders(State(pool): State<PgPool>) -> AppResult<Vec<ActiveOrderResponse>> {
@@ -169,21 +175,14 @@ pub async fn edit_active_order(State(pool): State<PgPool>, Json(payload): Json<E
 pub async fn settle_payment(State(pool): State<PgPool>, Json(payload): Json<OrderStaffReq>) -> AppResult<()> {
     let mut tx = pool.begin().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Fetch the detailed items for the receipt
     let items = sqlx::query_as::<_, OrderReceiptItem>(
         "SELECT pi.pos_display_name, oi.quantity, oi.price_at_time_of_sale::float8 FROM order_item oi JOIN prepared_inventory pi ON oi.prep_item_id = pi.prep_item_id WHERE oi.order_id = $1"
     ).bind(payload.order_id).fetch_all(&mut *tx).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Fetch order totals and customer identifier
-    let order_info: (f64, String) = sqlx::query_as("SELECT total_amount::float8, customer_identifier FROM orders WHERE order_id = $1")
-        .bind(payload.order_id).fetch_one(&mut *tx).await.unwrap_or((0.0, "Unknown".to_string()));
-
-    let total = order_info.0;
-    let customer = order_info.1;
-
     let receipt = items.iter().map(|i| format!("- {}x {} (PHP {:.2})", i.quantity, i.pos_display_name, i.price_at_time_of_sale * i.quantity as f64)).collect::<Vec<_>>().join("\n");
 
-    sqlx::query("UPDATE orders SET status = 'Completed' WHERE order_id = $1").bind(payload.order_id).execute(&mut *tx).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    sqlx::query("UPDATE orders SET status = 'Completed' WHERE order_id = $1")
+        .bind(payload.order_id).execute(&mut *tx).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     
     sqlx::query("INSERT INTO system_log (log_category, staff_id, description, details) VALUES ('POS', $1, 'Payment Settled', $2)")
         .bind(payload.staff_id).bind(format!("Order #{} has been paid in full.\n\nOrder Contents:\n{}", payload.order_id, receipt))
@@ -191,72 +190,8 @@ pub async fn settle_payment(State(pool): State<PgPool>, Json(payload): Json<Orde
 
     tx.commit().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // --- NEW: Physical Receipt Printing via ESC/POS Commands ---
-    // Runs in a background thread so the UI does not freeze while printing
-    tokio::spawn(async move {
-        let mut printer_data: Vec<u8> = Vec::new();
-        
-        // ESC @ (Initialize printer)
-        printer_data.extend_from_slice(&[0x1B, 0x40]);
-        
-        // ESC a 1 (Center align)
-        printer_data.extend_from_slice(&[0x1B, 0x61, 0x01]);
-        
-        printer_data.extend_from_slice(b"BBQ NA MURAG LAMI\n");
-        printer_data.extend_from_slice(b"Cagayan De Oro City\n");
-        printer_data.extend_from_slice(b"--------------------------------\n");
-        
-        // ESC a 0 (Left align)
-        printer_data.extend_from_slice(&[0x1B, 0x61, 0x00]);
-        
-        let order_hdr = format!("Identifier: {}\n\n", customer);
-        printer_data.extend_from_slice(order_hdr.as_bytes());
-
-        for item in &items {
-            let line_total = item.price_at_time_of_sale * item.quantity as f64;
-            let name_qty = format!("{}x {}", item.quantity, item.pos_display_name);
-            let price_str = format!("{:.2}", line_total);
-            
-            // Xprinter 58mm fits 32 characters max per line. 
-            // We truncate long item names and add spacing to push the price to the right edge.
-            let mut safe_name = name_qty.clone();
-            if safe_name.len() > 22 {
-                safe_name.truncate(22);
-            }
-            
-            let padding = 32_usize.saturating_sub(safe_name.len() + price_str.len());
-            let spaces = " ".repeat(padding);
-            
-            let print_line = format!("{}{}{}\n", safe_name, spaces, price_str);
-            printer_data.extend_from_slice(print_line.as_bytes());
-        }
-
-        printer_data.extend_from_slice(b"--------------------------------\n");
-        
-        // ESC a 2 (Right align)
-        printer_data.extend_from_slice(&[0x1B, 0x61, 0x02]);
-        let total_line = format!("TOTAL: PHP {:.2}\n", total);
-        
-        // ESC ! 0x11 (Double height & width text for the total)
-        printer_data.extend_from_slice(&[0x1B, 0x21, 0x11]);
-        printer_data.extend_from_slice(total_line.as_bytes());
-        // ESC ! 0x00 (Reset to normal text)
-        printer_data.extend_from_slice(&[0x1B, 0x21, 0x00]);
-
-        // ESC a 1 (Center align)
-        printer_data.extend_from_slice(&[0x1B, 0x61, 0x01]);
-        printer_data.extend_from_slice(b"\nThank you for dining with us!\n\n\n\n\n");
-        
-        // GS V 0 (Cut paper command)
-        printer_data.extend_from_slice(&[0x1D, 0x56, 0x00]);
-        
-        // ESC p 0 25 250 (Kick open the cash drawer)
-        printer_data.extend_from_slice(&[0x1B, 0x70, 0x00, 0x19, 0xFA]);
-
-        // Connect to the Windows Printer Share and send the raw byte array
-        let _ = std::fs::write(r"\\localhost\Xprinter", printer_data);
-    });
-
+    // The tokio::spawn block for hardware printing has been removed.
+    
     Ok(Json(()))
 }
 
@@ -301,79 +236,85 @@ pub async fn get_next_table_number(State(pool): State<PgPool>) -> Result<Json<i3
     Ok(Json(next_table))
 }
 
-pub async fn reprint_receipt(State(pool): State<PgPool>, Json(payload): Json<ReprintReq>) -> AppResult<()> {
-    let mut tx = pool.begin().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // 1. Fetch items
-    let items = sqlx::query_as::<_, OrderReceiptItem>(
-        "SELECT pi.pos_display_name, oi.quantity, oi.price_at_time_of_sale::float8 
-         FROM order_item oi 
-         JOIN prepared_inventory pi ON oi.prep_item_id = pi.prep_item_id 
-         WHERE oi.order_id = $1"
-    ).bind(payload.order_id).fetch_all(&mut *tx).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // 2. Fetch totals
-    let order_info: (f64, String) = sqlx::query_as(
-        "SELECT total_amount::float8, customer_identifier 
-         FROM orders WHERE order_id = $1"
-    )
-    .bind(payload.order_id).fetch_one(&mut *tx).await.unwrap_or((0.0, "Unknown".to_string()));
-
-    let total = order_info.0;
-    let customer = order_info.1;
-
-    tx.commit().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // 3. Build Printer Data (Notice: No more tokio::spawn)
+pub async fn reprint_receipt(State(_pool): State<PgPool>, Json(payload): Json<ReprintReq>) -> AppResult<()> {
+    
+    // We no longer need database queries. We build the printer data directly from the payload.
     let mut printer_data: Vec<u8> = Vec::new();
         
-    printer_data.extend_from_slice(&[0x1B, 0x40]); // Init
-    printer_data.extend_from_slice(&[0x1B, 0x61, 0x01]); // Center
+    // Init & Center Align
+    printer_data.extend_from_slice(&[0x1B, 0x40]);
+    printer_data.extend_from_slice(&[0x1B, 0x61, 0x01]); 
     
+    // Header (Matching your Vue layout)
     printer_data.extend_from_slice(b"BBQ NA MURAG LAMI\n");
-    printer_data.extend_from_slice(b"Cagayan De Oro City\n");
-    printer_data.extend_from_slice(b"*** REPRINT ***\n"); 
-    printer_data.extend_from_slice(b"--------------------------------\n");
+    printer_data.extend_from_slice(b"Ampayon, Butuan City\n\n"); 
     
-    printer_data.extend_from_slice(&[0x1B, 0x61, 0x00]); // Left
+    // Left Align for Details
+    printer_data.extend_from_slice(&[0x1B, 0x61, 0x00]); 
     
-    let order_hdr = format!("Identifier: {}\n\n", customer);
-    printer_data.extend_from_slice(order_hdr.as_bytes());
+    // Formatted Order Metadata
+    let order_meta = format!(
+        "Order #: {:>22}\nType: {:>25}\nDate: {:>25}\n\nCustomer/Table:\n{}\n",
+        payload.order_id, 
+        payload.order_type, 
+        payload.timestamp, 
+        payload.customer_identifier
+    );
+    printer_data.extend_from_slice(order_meta.as_bytes());
 
-    for item in &items {
-        let line_total = item.price_at_time_of_sale * item.quantity as f64;
-        let name_qty = format!("{}x {}", item.quantity, item.pos_display_name);
+    // Table Headers
+    printer_data.extend_from_slice(b"--------------------------------\n");
+    printer_data.extend_from_slice(b"QTY  ITEM                    AMT\n");
+    printer_data.extend_from_slice(b"--------------------------------\n");
+
+    let mut item_count = 0;
+
+    // Line Items
+    for item in &payload.cart_items {
+        item_count += item.qty;
+        let line_total = item.unit_price * item.qty as f64;
+        
+        let qty_str = format!("{:<4}", item.qty); 
         let price_str = format!("{:.2}", line_total);
         
-        let mut safe_name = name_qty.clone();
-        if safe_name.len() > 22 { safe_name.truncate(22); }
+        // Truncate item name to prevent text wrapping on 58mm paper (Max ~18 chars for name in this layout)
+        let mut safe_name = item.pos_display_name.clone();
+        if safe_name.len() > 18 { safe_name.truncate(18); }
         
-        let padding = 32_usize.saturating_sub(safe_name.len() + price_str.len());
-        let spaces = " ".repeat(padding);
+        // Calculate dynamic spacing to push the price to the right edge (32 chars total width)
+        let padding_length = 32_usize.saturating_sub(qty_str.len() + safe_name.len() + price_str.len());
+        let spaces = " ".repeat(padding_length);
         
-        let print_line = format!("{}{}{}\n", safe_name, spaces, price_str);
+        let print_line = format!("{}{}{}{}\n", qty_str, safe_name, spaces, price_str);
         printer_data.extend_from_slice(print_line.as_bytes());
     }
 
     printer_data.extend_from_slice(b"--------------------------------\n");
     
-    printer_data.extend_from_slice(&[0x1B, 0x61, 0x02]); // Right
-    let total_line = format!("TOTAL: PHP {:.2}\n", total);
+    // Right Align for Total
+    printer_data.extend_from_slice(&[0x1B, 0x61, 0x02]); 
     
+    // Emphasized Total
+    let total_line = format!("TOTAL: PHP {:.2}\n", payload.total_amount);
     printer_data.extend_from_slice(&[0x1B, 0x21, 0x11]); // Double height/width
     printer_data.extend_from_slice(total_line.as_bytes());
-    printer_data.extend_from_slice(&[0x1B, 0x21, 0x00]); // Reset
-
-    printer_data.extend_from_slice(&[0x1B, 0x61, 0x01]); // Center
-    printer_data.extend_from_slice(b"\nThank you for dining with us!\n\n\n\n\n");
+    printer_data.extend_from_slice(&[0x1B, 0x21, 0x00]); // Reset text size
     
-    printer_data.extend_from_slice(&[0x1D, 0x56, 0x00]); // Cut
-    printer_data.extend_from_slice(&[0x1B, 0x70, 0x00, 0x19, 0xFA]); // Drawer
+    // Item Count under Total
+    let count_line = format!("Item Count: {}\n", item_count);
+    printer_data.extend_from_slice(count_line.as_bytes());
 
-    // 4. Send to printer using async I/O and catch the error
-    if let Err(e) = tokio::fs::write(r"\\localhost\Xprinter", printer_data).await {
+    // Center Align for Footer
+    printer_data.extend_from_slice(&[0x1B, 0x61, 0x01]); 
+    printer_data.extend_from_slice(b"\nThank you for dining with us!\nPlease come again.\n\n\n\n\n");
+    
+    // Cut Paper & Kick Drawer
+    printer_data.extend_from_slice(&[0x1D, 0x56, 0x00]); 
+    printer_data.extend_from_slice(&[0x1B, 0x70, 0x00, 0x19, 0xFA]); 
+
+    // Send to Windows Spooler
+    if let Err(e) = tokio::fs::write(r"\\localhost\POS-58 11.3.0.1", printer_data).await {
         eprintln!("Printer hardware error: {}", e);
-        // Return a 500 error so the frontend knows the printer failed
         return Err((StatusCode::INTERNAL_SERVER_ERROR, "Printer is offline or disconnected".to_string()));
     }
 

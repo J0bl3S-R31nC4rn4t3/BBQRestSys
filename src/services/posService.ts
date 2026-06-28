@@ -119,11 +119,11 @@ export const posService = {
     return await res.json();
   },
 
-  async reprintReceipt(orderId: number): Promise<void> {
+  async reprintReceipt(order: ActiveOrder): Promise<void> {
     const res = await fetch(`${API_BASE}/pos/reprint`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ order_id: orderId })
+      body: JSON.stringify(order) // Send the full object
     });
     if (!res.ok) throw new Error('Failed to send reprint command');
   },
