@@ -167,4 +167,33 @@ export const inventoryService = {
     });
     if (!res.ok) throw new Error('Failed to delete item');
   },
+
+  // NEW: Added uploadPhoto method to resolve TS(2339) in AddVariantModal.vue
+  async uploadPhoto(file: File): Promise<string | null> {
+    const formData = new FormData();
+    // 'photo' is the standard field name, but ensure this matches what your backend expects
+    formData.append('photo', file);
+
+    // Adjust the endpoint route ('/inventory/upload') to match your backend API
+    const res = await fetch(`${API_BASE}/inventory/upload`, {
+      method: 'POST',
+      // Note: Do not manually set the 'Content-Type' header here. 
+      // The browser automatically sets it to 'multipart/form-data' with the correct boundary when passing FormData.
+      body: formData
+    });
+
+    if (!res.ok) throw new Error('Failed to upload photo');
+    
+    const data = await res.json();
+    // Ensure 'photo_url' matches the JSON key returned by your backend
+    return data.photo_url || null; 
+  },
+  // async deletePreparedItem(prepItemId: number): Promise<void> {
+  //   const res = await fetch(`${API_BASE}/inventory/delete-prepared`, {
+  //     method: 'POST',
+  //     headers: { 'Content-Type': 'application/json' },
+  //     body: JSON.stringify({ prep_item_id: prepItemId })
+  //   });
+  //   if (!res.ok) throw new Error('Failed to delete item');
+  // },
 };

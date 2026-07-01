@@ -112,7 +112,6 @@ export const posService = {
     if (!res.ok) throw new Error('Failed to update status');
   },
 
-  // Add this inside posService in src/services/posService.ts
   async getNextTableNumber(): Promise<number> {
     const res = await fetch(`${API_BASE}/pos/next-table`);
     if (!res.ok) throw new Error('Failed to get next table number');
@@ -120,11 +119,33 @@ export const posService = {
   },
 
   async reprintReceipt(order: ActiveOrder): Promise<void> {
+    // Manually format date to strictly guarantee exactly 19 characters: "MM/DD/YYYY HH:MM AM/PM"
+    const d = new Date(order.timestamp);
+    const month = (d.getMonth() + 1).toString().padStart(2, '0');
+    const day = d.getDate().toString().padStart(2, '0');
+    const year = d.getFullYear();
+    
+    let hours = d.getHours();
+    const minutes = d.getMinutes().toString().padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12; 
+    const strHours = hours.toString().padStart(2, '0');
+
+    const exactDateString = `${month}/${day}/${year} ${strHours}:${minutes} ${ampm}`;
+
+    // Overwrite the raw timestamp with the safely formatted one
+    const payload = {
+      ...order,
+      timestamp: exactDateString
+    };
+
     const res = await fetch(`${API_BASE}/pos/reprint`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(order) // Send the full object
+      body: JSON.stringify(payload)
     });
+    
     if (!res.ok) throw new Error('Failed to send reprint command');
   },
 };

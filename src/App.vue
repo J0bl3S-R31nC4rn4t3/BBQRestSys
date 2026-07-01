@@ -23,7 +23,8 @@ onMounted(() => {
 <template>
   <LoadingScreen :is-loading="!isAppReady" />
 
-  <div v-show="isAppReady" class="flex h-screen bg-surface text-on-surface font-sans overflow-hidden antialiased">
+  <!-- Added data-tauri-drag-region here -->
+  <div v-show="isAppReady" data-tauri-drag-region class="flex h-screen bg-surface text-on-surface font-sans overflow-hidden antialiased">
     
     <Sidebar v-if="!isPublicRoute" />
 
