@@ -9,7 +9,7 @@ import DataLoader from "../components/ui/DataLoader.vue";
 import BaseButton from "../components/ui/BaseButton.vue";
 import { useResponsive } from '../composables/useResponsive';
 
-const { fontSm, fontBase, fontXl } = useResponsive();
+const { fontSm, fontBase } = useResponsive();
 const authStore = useAuth();
 
 const staffMembers = ref<any[]>([]);

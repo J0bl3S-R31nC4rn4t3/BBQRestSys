@@ -9,7 +9,7 @@ import BaseButton from '../components/ui/BaseButton.vue';
 import BaseBadge from '../components/ui/BaseBadge.vue';
 import { useResponsive } from '../composables/useResponsive';
 
-const { fontSm, fontBase, fontLg, fontXl } = useResponsive();
+const { fontSm, fontBase, fontLg } = useResponsive();
 const authStore = useAuth();
 
 const isLoadingData = ref(true);

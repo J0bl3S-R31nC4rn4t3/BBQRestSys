@@ -6,7 +6,7 @@ import DataLoader from '../components/ui/DataLoader.vue';
 import Chart from 'chart.js/auto';
 import { useResponsive } from '../composables/useResponsive';
 
-const { fontSm, fontBase, fontLg, fontXl, font2xl } = useResponsive();
+const { fontSm, fontBase, fontLg, fontXl,} = useResponsive();
 
 const isLoadingData = ref(true);
 const isUpdatingChart = ref(false);

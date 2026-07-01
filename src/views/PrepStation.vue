@@ -7,7 +7,7 @@ import DataLoader from '../components/ui/DataLoader.vue';
 import BaseButton from '../components/ui/BaseButton.vue';
 import { useResponsive } from '../composables/useResponsive';
 
-const { fontSm, fontBase, fontLg } = useResponsive();
+const { fontSm, fontBase } = useResponsive();
 
 const selectedCategory = ref('');
 const selectedPart = ref('');

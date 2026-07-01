@@ -11,9 +11,9 @@ const props = defineProps<{
   staff: any;
 }>();
 
-const emit = defineEmits<{
-  (e: 'close'): void;
-}>();
+// const emit = defineEmits<{
+//   (e: 'close'): void;
+// }>();
 
 const shifts = ref<Shift[]>([]);
 const isLoading = ref(false);

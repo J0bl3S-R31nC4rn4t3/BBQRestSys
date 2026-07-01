@@ -8,7 +8,7 @@ import BaseBadge from '../components/ui/BaseBadge.vue';
 import ViewLogModal from '../components/modal/ViewLogModal.vue';
 import { useResponsive } from '../composables/useResponsive';
 
-const { fontSm, fontBase, fontXl, isMobile } = useResponsive();
+const { fontSm, fontBase, isMobile } = useResponsive();
 
 const logs = ref<SystemLog[]>([]);
 const isLoadingData = ref(true);

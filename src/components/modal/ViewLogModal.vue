@@ -2,7 +2,8 @@
 import type { SystemLog } from '../../services/logService';
 import BaseBadge from '../ui/BaseBadge.vue';
 
-const props = defineProps<{
+// Define props without assigning to an unused variable
+defineProps<{
   isOpen: boolean;
   log: SystemLog | null;
 }>();

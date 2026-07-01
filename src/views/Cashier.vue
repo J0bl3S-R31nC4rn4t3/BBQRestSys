@@ -10,7 +10,7 @@ import BaseButton from '../components/ui/BaseButton.vue';
 import { useResponsive } from '../composables/useResponsive';
 import { useAuth } from '../stores/authStore';
 
-const { fontSm, fontBase, fontLg, isMobile, isTablet } = useResponsive();
+const { fontSm,} = useResponsive();
 const { currentUser } = useAuth();
 
 const activeOrders = ref<ActiveOrder[]>([]);

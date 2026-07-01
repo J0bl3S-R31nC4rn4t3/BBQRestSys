@@ -11,10 +11,10 @@ const props = defineProps<{
   order: ActiveOrder | null;
 }>();
 
-const emit = defineEmits<{
-  (e: 'close'): void;
-  (e: 'print'): void;
-}>();
+// const emit = defineEmits<{
+//   (e: 'close'): void;
+//   (e: 'print'): void;
+// }>();
 
 // --- Dragging Logic ---
 const position = ref({ x: 0, y: 0 });

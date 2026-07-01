@@ -252,9 +252,12 @@ pub async fn reprint_receipt(State(_pool): State<PgPool>, Json(payload): Json<Re
     // Left Align for Details
     printer_data.extend_from_slice(&[0x1B, 0x61, 0x00]); 
     
-    // Formatted Order Metadata
+    // Formatted Order Metadata (Strict 32 character math)
+    // "Order #:" = 8 chars, leaves 24 chars for the value
+    // "Type:" = 5 chars, leaves 27 chars for the value
+    // "Date:" = 5 chars, leaves 27 chars for the value
     let order_meta = format!(
-        "Order #: {:>22}\nType: {:>25}\nDate: {:>25}\n\nCustomer/Table:\n{}\n",
+        "Order #:{:>24}\nType:{:>27}\nDate:{:>27}\n\nCustomer/Table:\n{}\n",
         payload.order_id, 
         payload.order_type, 
         payload.timestamp, 
@@ -264,29 +267,48 @@ pub async fn reprint_receipt(State(_pool): State<PgPool>, Json(payload): Json<Re
 
     // Table Headers
     printer_data.extend_from_slice(b"--------------------------------\n");
-    printer_data.extend_from_slice(b"QTY  ITEM                    AMT\n");
+    printer_data.extend_from_slice(b"QTY ITEM                     AMT\n");
     printer_data.extend_from_slice(b"--------------------------------\n");
 
     let mut item_count = 0;
 
-    // Line Items
+    // Line Items (Smart Wrapping Logic)
     for item in &payload.cart_items {
         item_count += item.qty;
         let line_total = item.unit_price * item.qty as f64;
         
-        let qty_str = format!("{:<4}", item.qty); 
+        let qty_str = format!("{:<4}", item.qty); // 4 chars reserved for quantity
         let price_str = format!("{:.2}", line_total);
+        let name = item.pos_display_name.clone();
         
-        // Truncate item name to prevent text wrapping on 58mm paper (Max ~18 chars for name in this layout)
-        let mut safe_name = item.pos_display_name.clone();
-        if safe_name.len() > 18 { safe_name.truncate(18); }
-        
-        // Calculate dynamic spacing to push the price to the right edge (32 chars total width)
-        let padding_length = 32_usize.saturating_sub(qty_str.len() + safe_name.len() + price_str.len());
-        let spaces = " ".repeat(padding_length);
-        
-        let print_line = format!("{}{}{}{}\n", qty_str, safe_name, spaces, price_str);
-        printer_data.extend_from_slice(print_line.as_bytes());
+        // Calculate the maximum characters the name can take to fit on ONE line
+        // 32 total chars minus QTY length minus Price length minus 1 guaranteed space
+        let max_single_line_name_len = 32_usize.saturating_sub(qty_str.len() + price_str.len() + 1);
+
+        if name.len() <= max_single_line_name_len {
+            // The name fits perfectly on a single line
+            let padding_length = 32_usize.saturating_sub(qty_str.len() + name.len() + price_str.len());
+            let spaces = " ".repeat(padding_length);
+            
+            let print_line = format!("{}{}{}{}\n", qty_str, name, spaces, price_str);
+            printer_data.extend_from_slice(print_line.as_bytes());
+        } else {
+            // The name is too long! Print the full name on Line 1, and drop the price to Line 2
+            let mut safe_name = name;
+            
+            // 28 is the absolute max name length on line 1 (32 total - 4 for QTY column)
+            if safe_name.len() > 28 { safe_name.truncate(28); }
+            
+            // Line 1: Quantity and Item Name
+            let line1 = format!("{}{}\n", qty_str, safe_name);
+            
+            // Line 2: Empty spaces pushing the price to the far right edge
+            let line2_spaces = " ".repeat(32_usize.saturating_sub(price_str.len()));
+            let line2 = format!("{}{}\n", line2_spaces, price_str);
+            
+            printer_data.extend_from_slice(line1.as_bytes());
+            printer_data.extend_from_slice(line2.as_bytes());
+        }
     }
 
     printer_data.extend_from_slice(b"--------------------------------\n");

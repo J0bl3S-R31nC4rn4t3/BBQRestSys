@@ -12,7 +12,7 @@ import BaseButton from '../components/ui/BaseButton.vue';
 import BaseBadge from '../components/ui/BaseBadge.vue';
 import { useResponsive } from '../composables/useResponsive';
 
-const { fontSm, fontBase, fontXl, isMobile } = useResponsive();
+const { fontSm, fontBase, isMobile } = useResponsive();
 
 const rawInventory = ref<RawInventoryItem[]>([]);
 const preparedInventory = ref<PreparedInventoryItem[]>([]);
