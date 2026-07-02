@@ -10,6 +10,7 @@ import Schedule from '../views/Schedule.vue';
 import PrepStation from '../views/PrepStation.vue';
 import Login from '../authStore/Login.vue'; 
 import CustomerMenu from '../ClientKiosk/CustomerMenu.vue';
+import Settings from '../views/Settings.vue';
 
 const routes = [
   { 
@@ -55,6 +56,11 @@ const routes = [
   { 
     path: '/logs', 
     component: Logs, 
+    meta: { roles: ['Admin'] } 
+  },
+  { 
+    path: '/settings', 
+    component: Settings, 
     meta: { roles: ['Admin'] } 
   },
 ];

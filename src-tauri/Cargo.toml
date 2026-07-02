@@ -33,3 +33,7 @@ serde_json = "1"
 # Data types used in your database schema
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+
+# System & Hardware Integrations
+local-ip-address = "0.6"
+printers = "2.3.0"
